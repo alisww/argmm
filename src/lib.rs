@@ -4,10 +4,13 @@ mod simd;
 #[cfg(target_feature = "sse")]
 mod task;
 
-#[cfg(not(target_feature = "sse"))]
 pub use generic::{simple_argmax, simple_argmin};
+
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+pub use simd::simd_f32;
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 #[cfg(target_feature = "sse")]
-pub use simd::{simd_f32, simd_i16, simd_i32, simd_u16, simd_u8};
+pub use simd::{simd_i16, simd_i32, simd_u16, simd_u8};
 
 pub trait ArgMinMax {
     fn argmin(&self) -> Option<usize>;
@@ -19,8 +22,10 @@ macro_rules! impl_argmm_f32 {
         $(impl ArgMinMax for $b {
 
             fn argmin(&self) -> Option<usize> {
-            #[cfg(not(target_feature = "sse"))] return Some(simple_argmin(self));
-            #[cfg(target_feature = "sse")] return simd_f32::argmin_f32(self);
+            #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+            return simd_f32::argmin_f32(self);
+            #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+            return Some(simple_argmin(self));
             }
 
             fn argmax(&self) -> Option<usize> {

@@ -3,36 +3,35 @@ use crate::task::{find_final_index_max, find_final_index_min, split_array};
 
 pub fn argmin_f32(arr: &[f32]) -> Option<usize> {
     if is_x86_feature_detected!("sse") {
-        if is_x86_feature_detected!("avx2") {
-            match split_array(arr, 8) {
-                (Some(rem), Some(sim)) => {
-                    let rem_min_index = simple_argmin(rem);
-                    let rem_result = (rem[rem_min_index], rem_min_index);
-                    let sim_result = unsafe { core_argmin_256(sim, rem.len()) };
-                    find_final_index_min(rem_result, sim_result)
-                }
-                (Some(rem), None) => Some(simple_argmin(rem)),
-                (None, Some(sim)) => {
-                    let sim_result = unsafe { core_argmin_256(sim, 0) };
-                    Some(sim_result.1)
-                }
-                (None, None) => None,
+        // if is_x86_feature_detected!("avx2") {
+        //     match split_array(arr, 8) {
+        //         (Some(rem), Some(sim)) => {
+        //             let rem_min_index = simple_argmin(rem);
+        //             let rem_result = (rem[rem_min_index], rem_min_index);
+        //             let sim_result = unsafe { core_argmin_256(sim, rem.len()) };
+        //             find_final_index_min(rem_result, sim_result)
+        //         }
+        //         (Some(rem), None) => Some(simple_argmin(rem)),
+        //         (None, Some(sim)) => {
+        //             let sim_result = unsafe { core_argmin_256(sim, 0) };
+        //             Some(sim_result.1)
+        //         }
+        //         (None, None) => None,
+        //     }
+        // } else {
+        match split_array(arr, 4) {
+            (Some(rem), Some(sim)) => {
+                let rem_min_index = simple_argmin(rem);
+                let rem_result = (rem[rem_min_index], rem_min_index);
+                let sim_result = unsafe { core_argmin_128(sim, rem.len()) };
+                find_final_index_min(rem_result, sim_result)
             }
-        } else {
-            match split_array(arr, 4) {
-                (Some(rem), Some(sim)) => {
-                    let rem_min_index = simple_argmin(rem);
-                    let rem_result = (rem[rem_min_index], rem_min_index);
-                    let sim_result = unsafe { core_argmin_128(sim, rem.len()) };
-                    find_final_index_min(rem_result, sim_result)
-                }
-                (Some(rem), None) => Some(simple_argmin(rem)),
-                (None, Some(sim)) => {
-                    let sim_result = unsafe { core_argmin_128(sim, 0) };
-                    Some(sim_result.1)
-                }
-                (None, None) => None,
+            (Some(rem), None) => Some(simple_argmin(rem)),
+            (None, Some(sim)) => {
+                let sim_result = unsafe { core_argmin_128(sim, 0) };
+                Some(sim_result.1)
             }
+            (None, None) => None,
         }
     } else {
         Some(simple_argmin(arr))
@@ -105,9 +104,8 @@ unsafe fn core_argmin_256(sim_arr: &[f32], rem_offset: usize) -> (f32, usize) {
         offset,
     );
 
-    let increment = _mm256_set1_ps(4.0);
+    let increment = _mm256_set1_ps(8.0);
     let mut new_index_low = index_low;
-
     let mut values_low = _mm256_loadu_ps(sim_arr.as_ptr() as *const f32);
 
     sim_arr.chunks_exact(8).skip(1).for_each(|step| {
@@ -116,11 +114,8 @@ unsafe fn core_argmin_256(sim_arr: &[f32], rem_offset: usize) -> (f32, usize) {
         let new_values = _mm256_loadu_ps(step.as_ptr() as *const f32);
         let lt_mask = _mm256_cmp_ps(new_values, values_low, 17); // _CMP_LT_OQ
 
-        values_low = _mm256_min_ps(new_values, values_low);
-        index_low = _mm256_or_ps(
-            _mm256_and_ps(new_index_low, lt_mask),
-            _mm256_andnot_ps(lt_mask, index_low),
-        );
+        values_low = _mm256_blendv_ps(values_low, new_values, lt_mask);
+        index_low = _mm256_blendv_ps(index_low, new_index_low, lt_mask);
     });
 
     let highpack = _mm256_unpackhi_ps(values_low, values_low);

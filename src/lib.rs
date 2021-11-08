@@ -1,5 +1,5 @@
 pub mod generic;
-#[cfg(target_feature = "sse")]
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 mod simd;
 #[cfg(target_feature = "sse")]
 mod task;

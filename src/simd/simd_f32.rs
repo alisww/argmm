@@ -2,23 +2,22 @@ use crate::generic::{simple_argmax, simple_argmin};
 use crate::task::{find_final_index_max, find_final_index_min, split_array};
 
 pub fn argmin_f32(arr: &[f32]) -> Option<usize> {
-    if is_x86_feature_detected!("sse") {
-        // if is_x86_feature_detected!("avx2") {
-        //     match split_array(arr, 8) {
-        //         (Some(rem), Some(sim)) => {
-        //             let rem_min_index = simple_argmin(rem);
-        //             let rem_result = (rem[rem_min_index], rem_min_index);
-        //             let sim_result = unsafe { core_argmin_256(sim, rem.len()) };
-        //             find_final_index_min(rem_result, sim_result)
-        //         }
-        //         (Some(rem), None) => Some(simple_argmin(rem)),
-        //         (None, Some(sim)) => {
-        //             let sim_result = unsafe { core_argmin_256(sim, 0) };
-        //             Some(sim_result.1)
-        //         }
-        //         (None, None) => None,
-        //     }
-        // } else {
+    if is_x86_feature_detected!("avx") {
+        match split_array(arr, 8) {
+            (Some(rem), Some(sim)) => {
+                let rem_min_index = simple_argmin(rem);
+                let rem_result = (rem[rem_min_index], rem_min_index);
+                let sim_result = unsafe { core_argmin_256(sim, rem.len()) };
+                find_final_index_min(rem_result, sim_result)
+            }
+            (Some(rem), None) => Some(simple_argmin(rem)),
+            (None, Some(sim)) => {
+                let sim_result = unsafe { core_argmin_256(sim, 0) };
+                Some(sim_result.1)
+            }
+            (None, None) => None,
+        }
+    } else if is_x86_feature_detected!("sse") {
         match split_array(arr, 4) {
             (Some(rem), Some(sim)) => {
                 let rem_min_index = simple_argmin(rem);
@@ -90,8 +89,9 @@ unsafe fn core_argmin_128(sim_arr: &[f32], rem_offset: usize) -> (f32, usize) {
     (value, index as usize)
 }
 
+// based on http://0x80.pl/notesen/2018-10-03-simd-index-of-min.html
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-#[target_feature(enable = "avx2")]
+#[target_feature(enable = "avx")]
 unsafe fn core_argmin_256(sim_arr: &[f32], rem_offset: usize) -> (f32, usize) {
     #[cfg(target_arch = "x86")]
     use std::arch::x86::*;
@@ -99,48 +99,37 @@ unsafe fn core_argmin_256(sim_arr: &[f32], rem_offset: usize) -> (f32, usize) {
     use std::arch::x86_64::*;
 
     let offset = _mm256_set1_ps(rem_offset as f32);
-    let mut index_low = _mm256_add_ps(
-        _mm256_set_ps(7.0, 6.0, 5.0, 4.0, 3.0, 2.0, 1.0, 0.0),
+    let mut indices = _mm256_add_ps(
+        _mm256_setr_ps(0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0),
         offset,
     );
 
     let increment = _mm256_set1_ps(8.0);
-    let mut new_index_low = index_low;
-    let mut values_low = _mm256_loadu_ps(sim_arr.as_ptr() as *const f32);
+    let mut min_indices = indices;
+    let mut min_values = _mm256_loadu_ps(sim_arr.as_ptr() as *const f32);
 
     sim_arr.chunks_exact(8).skip(1).for_each(|step| {
-        new_index_low = _mm256_add_ps(new_index_low, increment);
+        indices = _mm256_add_ps(indices, increment);
 
-        let new_values = _mm256_loadu_ps(step.as_ptr() as *const f32);
-        let lt_mask = _mm256_cmp_ps(new_values, values_low, 17); // _CMP_LT_OQ
-
-        values_low = _mm256_blendv_ps(values_low, new_values, lt_mask);
-        index_low = _mm256_blendv_ps(index_low, new_index_low, lt_mask);
+        let values = _mm256_loadu_ps(step.as_ptr() as *const f32);
+        let lt = _mm256_cmp_ps(values, min_values, 17); // CMP_LT_OQ
+        min_values = _mm256_min_ps(values, min_values);
+        min_indices = _mm256_blendv_ps(min_indices, indices, lt);
     });
 
-    let highpack = _mm256_unpackhi_ps(values_low, values_low);
-    let lowpack = _mm256_unpacklo_ps(values_low, values_low);
-    let lowest = _mm256_min_ps(highpack, lowpack);
+    let value_array = std::mem::transmute::<__m256, [f32; 8]>(min_values);
+    let index_array = std::mem::transmute::<__m256, [f32; 8]>(min_indices);
 
-    let highpack = _mm256_unpackhi_ps(lowest, lowest);
-    let lowpack = _mm256_unpacklo_ps(lowest, lowest);
-    let lowest = _mm256_min_ps(highpack, lowpack);
+    let mut min_value = value_array[0];
+    let mut min_index = index_array[0];
+    for i in 1..8 {
+        if value_array[i] < min_value {
+            min_value = value_array[i];
+            min_index = index_array[i];
+        }
+    }
 
-    let low_mask = _mm256_cmp_ps(lowest, values_low, 0); // _CMP_EQ_OQ
-
-    index_low = _mm256_or_ps(
-        _mm256_and_ps(index_low, low_mask),
-        _mm256_andnot_ps(low_mask, _mm256_set1_ps(std::f32::MAX)),
-    );
-
-    let value_array = std::mem::transmute::<__m256, [f32; 8]>(values_low);
-    let index_array = std::mem::transmute::<__m256, [f32; 8]>(index_low);
-
-    let min_index = simple_argmin(&index_array);
-    let value = *value_array.get_unchecked(min_index);
-    let index = *index_array.get_unchecked(min_index);
-
-    (value, index as usize)
+    (min_value, min_index as usize)
 }
 
 pub fn argmax_f32(arr: &[f32]) -> Option<usize> {

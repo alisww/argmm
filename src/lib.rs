@@ -7,7 +7,7 @@ mod task;
 pub use generic::{simple_argmax, simple_argmin};
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-pub use simd::simd_f32;
+pub use simd::{core_f32_argmin_128, core_f32_argmin_256, simd_f32};
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 #[cfg(target_feature = "sse")]
 pub use simd::{simd_i16, simd_i32, simd_u16, simd_u8};

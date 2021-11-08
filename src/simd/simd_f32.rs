@@ -7,12 +7,12 @@ pub fn argmin_f32(arr: &[f32]) -> Option<usize> {
             (Some(rem), Some(sim)) => {
                 let rem_min_index = simple_argmin(rem);
                 let rem_result = (rem[rem_min_index], rem_min_index);
-                let sim_result = unsafe { core_argmin_256(sim, rem.len()) };
+                let sim_result = unsafe { core_f32_argmin_256(sim, rem.len()) };
                 find_final_index_min(rem_result, sim_result)
             }
             (Some(rem), None) => Some(simple_argmin(rem)),
             (None, Some(sim)) => {
-                let sim_result = unsafe { core_argmin_256(sim, 0) };
+                let sim_result = unsafe { core_f32_argmin_256(sim, 0) };
                 Some(sim_result.1)
             }
             (None, None) => None,
@@ -22,12 +22,12 @@ pub fn argmin_f32(arr: &[f32]) -> Option<usize> {
             (Some(rem), Some(sim)) => {
                 let rem_min_index = simple_argmin(rem);
                 let rem_result = (rem[rem_min_index], rem_min_index);
-                let sim_result = unsafe { core_argmin_128(sim, rem.len()) };
+                let sim_result = unsafe { core_f32_argmin_128(sim, rem.len()) };
                 find_final_index_min(rem_result, sim_result)
             }
             (Some(rem), None) => Some(simple_argmin(rem)),
             (None, Some(sim)) => {
-                let sim_result = unsafe { core_argmin_128(sim, 0) };
+                let sim_result = unsafe { core_f32_argmin_128(sim, 0) };
                 Some(sim_result.1)
             }
             (None, None) => None,
@@ -37,7 +37,9 @@ pub fn argmin_f32(arr: &[f32]) -> Option<usize> {
     }
 }
 
-unsafe fn core_argmin_128(sim_arr: &[f32], rem_offset: usize) -> (f32, usize) {
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[target_feature(enable = "sse")]
+pub unsafe fn core_f32_argmin_128(sim_arr: &[f32], rem_offset: usize) -> (f32, usize) {
     #[cfg(target_arch = "x86")]
     use std::arch::x86::*;
     #[cfg(target_arch = "x86_64")]
@@ -92,7 +94,7 @@ unsafe fn core_argmin_128(sim_arr: &[f32], rem_offset: usize) -> (f32, usize) {
 // based on http://0x80.pl/notesen/2018-10-03-simd-index-of-min.html
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 #[target_feature(enable = "avx")]
-unsafe fn core_argmin_256(sim_arr: &[f32], rem_offset: usize) -> (f32, usize) {
+pub unsafe fn core_f32_argmin_256(sim_arr: &[f32], rem_offset: usize) -> (f32, usize) {
     #[cfg(target_arch = "x86")]
     use std::arch::x86::*;
     #[cfg(target_arch = "x86_64")]
